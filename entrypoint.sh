@@ -50,8 +50,19 @@ cleanup() {
     ip6tables -t nat -X PROXY_REDIRECT 2>/dev/null || true
 }
 trap cleanup EXIT
-trap 'kill $GOST_PID 2>/dev/null' TERM INT
+trap 'kill $GOST_PID $WATCHDOG_PID 2>/dev/null' TERM INT
 
 gost -L "red://:12345" -F "${GOST_SCHEME}://${PROXY_SERVER}:${PROXY_PORT}" &
 GOST_PID=$!
+
+# Watchdog: exit when the app container's network interface disappears.
+# Docker removes the veth pair (eth0) from the shared namespace as soon as the
+# app container stops, so this is a reliable signal that the app is gone.
+(
+    while [ -d /sys/class/net/eth0 ]; do sleep 2; done
+    echo "proxy-sidecar: eth0 gone (app container stopped), exiting"
+    kill $GOST_PID 2>/dev/null
+) &
+WATCHDOG_PID=$!
+
 wait $GOST_PID
